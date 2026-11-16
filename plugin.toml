@@ -1,0 +1,128 @@
+id = "local.jrebel-integration"
+name = "Echo JRebel"
+version = "0.4.5"
+description = "Echo JRebel adds a live auto-compile status to OpenIDEA's main toolbar. Uses your locally licensed Agent."
+authors = ["CuberSome"]
+categories = ["tools", "frameworks"]
+engines.openidea = "^1.9"
+wasm = "dist/plugin.wasm"
+activation = ["on-command:*", "on-view:modules", "on-event:document-changed", "on-event:file-saved", "on-event:files-changed", "on-event:file-opened"]
+
+[capabilities]
+required = ["project.read", "project.write", "storage", "events", "editor.read", "ide.commands"]
+optional = ["process:java", "process:mvn", "process:gradle"]
+
+[contributes.settings]
+schema = "settings.schema.json"
+
+[[contributes.views]]
+id = "modules"
+title = "Echo JRebel"
+icon = "bolt"
+location = "right"
+
+[[contributes.runConfigurations]]
+files = ["pom.xml", "build.gradle", "build.gradle.kts", "**/pom.xml", "**/build.gradle", "**/build.gradle.kts"]
+
+[[contributes.commands]]
+id = "auto-toggle"
+title = "自动编译 开/关"
+category = "JRebel"
+icon = "sync"
+
+[[contributes.statusBar]]
+id = "auto"
+text = "JRebel 自动: 关"
+tooltip = "点击开启/暂停。停止修改5秒后保存全部，仅编译所选模块。"
+command = "auto-toggle"
+align = "right"
+
+[[contributes.statusBar]]
+id = "auto-top"
+text = "Echo JRebel"
+tooltip = "显示自动编译状态；点击切换。"
+command = "auto-toggle"
+align = "right"
+placement = "mainToolbar"
+
+[[contributes.commands]]
+id = "setup"
+title = "选择热部署模块"
+category = "JRebel"
+
+[[contributes.commands]]
+id = "configure"
+title = "编辑项目配置"
+category = "JRebel"
+
+[[contributes.commands]]
+id = "run"
+title = "运行服务（JRebel）"
+category = "JRebel"
+icon = "play"
+
+[[contributes.commands]]
+id = "compile"
+title = "编译更新"
+category = "JRebel"
+icon = "build"
+
+[[contributes.commands]]
+id = "check"
+title = "检查 Agent"
+category = "JRebel"
+
+[[contributes.commands]]
+id = "disable"
+title = "禁用当前项目"
+category = "JRebel"
+
+[[contributes.commands]]
+id = "reset"
+title = "重置项目配置"
+category = "JRebel"
+
+[[contributes.menus]]
+menu = "mainToolbar"
+command = "run"
+
+[[contributes.menus]]
+menu = "mainToolbar"
+command = "compile"
+
+[[contributes.menus]]
+menu = "mainToolbar"
+command = "auto-toggle"
+
+
+[[contributes.menus]]
+menu = "tools"
+command = "setup"
+
+[[contributes.menus]]
+menu = "tools"
+command = "configure"
+
+[[contributes.menus]]
+menu = "tools"
+command = "run"
+
+[[contributes.menus]]
+menu = "tools"
+command = "compile"
+
+[[contributes.menus]]
+menu = "tools"
+command = "check"
+
+[[contributes.menus]]
+menu = "tools"
+command = "disable"
+
+[[contributes.menus]]
+menu = "tools"
+command = "auto-toggle"
+
+[[contributes.menus]]
+menu = "tools"
+command = "reset"

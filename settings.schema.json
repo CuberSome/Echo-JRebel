@@ -1,0 +1,10 @@
+{
+  "properties": {
+    "agentLibrary": {
+      "type": "string",
+      "title": "JRebel native Agent library (absolute path)",
+      "description": "Set globally once. Windows x64: C:/JRebel/lib/jrebel64.dll. Requires your own JRebel installation and license.",
+      "default": ""
+    }
+  }
+}

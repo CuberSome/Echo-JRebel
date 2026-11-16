@@ -7,6 +7,9 @@ try {
     }
     $version = $Matches[1]
 
+    & ./agent/build.ps1
+    if ($LASTEXITCODE -ne 0) { throw 'Echo Agent build failed' }
+
     rustup target add wasm32-wasip2
     if ($LASTEXITCODE -ne 0) { throw 'Could not install wasm32-wasip2 target' }
 
@@ -22,14 +25,17 @@ try {
 
     New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
     Copy-Item -LiteralPath $wasm -Destination 'dist/plugin.wasm' -Force
+    Copy-Item -LiteralPath 'agent/dist/echo-agent.jar' -Destination 'dist/echo-agent.jar' -Force
+    Copy-Item -LiteralPath 'vendor/openidea-plugin/LICENSE' -Destination 'dist/OPENIDEA-SDK-LICENSE' -Force
 
     $releaseDir = Join-Path $PSScriptRoot 'release'
     New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
     $zip = Join-Path $releaseDir "echo-jrebel-$version.zip"
     $package = Join-Path $releaseDir "echo-jrebel-$version.oiplugin"
     Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-    Compress-Archive -LiteralPath 'plugin.toml', 'settings.schema.json', 'dist', 'README.md' -DestinationPath $zip -Force
+    Compress-Archive -LiteralPath 'plugin.toml', 'settings.schema.json', 'dist', 'README.md', 'VERIFICATION.md', 'docs', 'THIRD_PARTY_NOTICES.md' -DestinationPath $zip -Force
     Move-Item -LiteralPath $zip -Destination $package -Force
+    Copy-Item -LiteralPath 'dist/echo-agent.jar' -Destination (Join-Path $releaseDir 'echo-agent.jar') -Force
     Write-Output "Package created: $package"
 } finally {
     Pop-Location

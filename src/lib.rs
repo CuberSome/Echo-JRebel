@@ -2,6 +2,7 @@ use openidea_plugin::{host, register_plugin, Error, Invocation, PickItem, Plugin
 use openidea_plugin::views::{Body, View, ViewEvent, Views};
 use serde::{Deserialize, Serialize};
 mod auto;
+mod echo;
 
 const CONFIG: &str = "project:";
 
@@ -21,6 +22,8 @@ fn module_enabled_default() -> bool { true }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    #[serde(default = "legacy_engine")]
+    engine: String,
     enabled: bool,
     // "maven-boot" adds the Agent to Spring Boot's forked JVM; "java" uses direct argv.
     launch: String,
@@ -32,6 +35,10 @@ struct Config {
     compile_args: Vec<String>,
     modules: Vec<Module>,
 }
+
+fn legacy_engine() -> String { "jrebel".into() }
+
+fn new_engine() -> String { host::setting_string("engine").unwrap_or_else(|| "echo".into()) }
 
 fn relative(path: &str) -> Result<String, Error> {
     let path = path.replace('\\', "/");
@@ -67,6 +74,7 @@ fn agent_arg(path: &str) -> Result<String, Error> {
 }
 
 fn validate(c: &Config) -> Result<(), Error> {
+    if !matches!(c.engine.as_str(), "echo" | "jrebel") { return Err("engine 必须为 echo 或 jrebel".into()); }
     if !matches!(c.launch.as_str(), "maven-boot" | "java") || !matches!(c.build_tool.as_str(), "mvn" | "gradle") {
         return Err("launch 必须为 maven-boot 或 java；build_tool 必须为 mvn 或 gradle".into());
     }
@@ -121,6 +129,7 @@ fn write_backed_up(p: &Project, path: &str, text: &str) -> Result<(), Error> {
 
 fn generate(p: &Project, c: &Config) -> Result<(), Error> {
     validate(c)?;
+    if c.engine == "echo" { return echo::generate(p, c); }
     let root = p.root()?;
     // Prepare every mapping before changing files. Host also enforces symlink containment.
     let files: Vec<_> = c.modules.iter().map(|m| Ok((join(&relative(&m.path)?, &relative(&m.rebel_file)?).trim_start_matches('/').to_owned(), rebel(&root, m)?)))
@@ -141,8 +150,9 @@ fn save(root: &str, c: &Config) -> Result<(), Error> {
     host::storage::set(&project_key(root), &serde_json::to_string(c).map_err(|e| e.to_string())?)
 }
 
-fn global_agent() -> Result<String, Error> {
-    agent_arg(&host::setting_string("agentLibrary").unwrap_or_default())
+fn global_agent(root: &str, c: &Config) -> Result<String, Error> {
+    if c.engine == "echo" { echo::agent_arg(root) }
+    else { agent_arg(&host::setting_string("agentLibrary").unwrap_or_default()) }
 }
 
 // Spring Boot's JVM argument parser receives this string after process argv parsing.
@@ -174,8 +184,8 @@ fn configs(root: &str, c: &Config, agent: &str) -> Result<Vec<PluginRunConfigura
         id: id.into(), name: name.into(), program: program.into(), args, cwd: Some(root.into()), ..Default::default()
     };
     Ok(vec![
-        entry("app", "JRebel: Run Application", program, args),
-        entry("compile", "JRebel: Compile Updates", &c.build_tool, c.compile_args.clone()),
+        entry("app", if c.engine == "echo" { "Echo: Run Application" } else { "JRebel: Run Application" }, program, args),
+        entry("compile", "Echo: Compile Updates", &c.build_tool, c.compile_args.clone()),
     ])
 }
 
@@ -192,7 +202,7 @@ fn setup_manual(p: &Project) -> Result<Config, Error> {
     }
     candidates.sort(); candidates.dedup();
     let items: Vec<_> = candidates.iter().map(|m| PickItem::new(if m.is_empty() { "." } else { m }, if m.is_empty() { ". (项目根目录)" } else { m })).collect();
-    let selected = host::pick_many("选择需要 JRebel 热部署的模块（至少一个）", &items)?.ok_or(Error::Cancelled)?;
+    let selected = host::pick_many("选择热更新模块（至少一个）", &items)?.ok_or(Error::Cancelled)?;
     if selected.is_empty() { return Err("至少选择一个模块".into()); }
     let maven = p.exists("pom.xml")?;
     let mode = host::pick("选择启动方式", &[
@@ -200,6 +210,7 @@ fn setup_manual(p: &Project) -> Result<Config, Error> {
         PickItem::new("java", "直接 Java（需填写主类/类路径或 -jar）"),
     ])?.ok_or(Error::Cancelled)?;
     let mut c = Config {
+        engine: new_engine(),
         enabled: true, launch: mode, pom: "pom.xml".into(), java_args: vec!["-cp".into(), "target/classes".into(), "com.example.Application".into()],
         jvm_args: vec![], app_args: vec![], build_tool: if maven { "mvn" } else { "gradle" }.into(),
         compile_args: if maven { vec!["-DskipTests".into(), "compile".into()] } else { vec!["classes".into()] },
@@ -256,6 +267,7 @@ fn setup(p: &Project) -> Result<Config, Error> {
         path: path.clone(), enabled: true, classes: vec!["target/classes".into()], resources: vec!["src/main/resources".into()],
     }).collect::<Vec<_>>();
     Ok(Config {
+        engine: new_engine(),
         enabled: true, launch: "maven-boot".into(),
         pom: if app.is_empty() { "pom.xml".into() } else { format!("{app}/pom.xml") },
         java_args: vec![], jvm_args: vec![], app_args: vec![], build_tool: "mvn".into(),
@@ -277,26 +289,26 @@ impl Plugin for Integration {
     }
 
     fn run_command(&mut self, id: &str, ctx: &Invocation, _: Option<&str>) -> Result<Option<String>, Error> {
-        let p = ctx.project().ok_or("请先打开项目；全局 Agent 路径可在 Settings > Plugins > JRebel Integration 设置")?;
+        let p = ctx.project().ok_or("请先打开项目；Agent 路径在 Settings > Plugins > Echo JRebel 设置")?;
         let root = p.root()?;
         match id {
             "auto-toggle" => {
-                let c = load(&root)?.ok_or("请先启用项目的 JRebel 配置")?;
+                let c = load(&root)?.ok_or("请先初始化热更新配置")?;
                 auto::toggle(&p, &c)
             }
             "setup" | "configure" => {
                 let c = if id == "configure" {
-                    let c = load(&root)?.ok_or("请先运行 JRebel: Enable / Select Modules")?;
+                    let c = load(&root)?.ok_or("请先选择热部署模块以初始化项目")?;
                     let text = host::input_multiline("编辑 JRebel 项目配置", Some(&serde_json::to_string_pretty(&c).map_err(|e| e.to_string())?))?.ok_or(Error::Cancelled)?;
                     serde_json::from_str(&text).map_err(|e| format!("配置 JSON 无效: {e}"))?
                 } else { setup(&p)? };
                 validate(&c)?;
                 // Preflight launch arguments before writing mappings or enabling the project.
-                configs(&root, &c, &global_agent()?)?;
+                configs(&root, &c, &global_agent(&root, &c)?)?;
                 generate(&p, &c)?;
                 save(&root, &c)?;
                 auto::refresh_status(&root)?;
-                Ok(Some("配置已保存，rebel.xml 已生成；已有内容发生变化时已保留 .jrebel-backup-N。先保存代码并执行 Compile Updates，再 Run Application。".into()))
+                Ok(Some("配置已保存，所选引擎的映射已生成；修改映射后请重启服务。先编译，再选择对应 Run Application 启动。".into()))
             }
             "disable" => {
                 auto::pause(&root)?;
@@ -316,23 +328,42 @@ impl Plugin for Integration {
                     if id == "run" {
                         let c = setup(&p)?;
                         validate(&c)?;
-                        configs(&root, &c, &global_agent()?)?;
+                        configs(&root, &c, &global_agent(&root, &c)?)?;
                         generate(&p, &c)?;
                         save(&root, &c)?;
                         auto::refresh_status(&root)?;
-                        return Ok(Some("JRebel 项目配置已保存。运行配置刷新后，请在右上角选择「JRebel: Run Application」并点击绿色运行按钮启动服务。".into()));
+                        return Ok(Some("项目配置已保存。运行配置刷新后，请在右上角选择对应引擎的 Run Application 并启动服务。".into()));
                     }
-                    return Err("请先运行 JRebel: Enable / Select Modules".into());
+                    return Err("请先选择热部署模块以初始化项目".into());
                 };
-                if !c.enabled { return Err("此项目尚未启用 JRebel".into()); }
+                if !c.enabled { return Err("此项目尚未启用热更新".into()); }
                 if id == "compile" { return auto::manual(&p, &c); }
-                configs(&root, &c, &global_agent()?)?;
+                configs(&root, &c, &global_agent(&root, &c)?)?;
                 generate(&p, &c)?;
                 host::start_run(if id == "run" { "app" } else { "compile" }, &[], false)?;
                 Ok(None)
             }
+            "reload-status" => {
+                let c = load(&root)?.ok_or("请先初始化项目")?;
+                if c.engine != "echo" { return Err("当前使用 JRebel，请在其应用日志中查看重载结果".into()); }
+                Ok(Some(echo::status(&p)?))
+            }
+            "engine-select" => {
+                let mut c = load(&root)?.ok_or("请先初始化项目")?;
+                c.engine = host::pick("选择热更新引擎（切换后需手动重启服务）", &[
+                    PickItem::new("echo", "Echo Agent（自研：已有方法逻辑热更新）"),
+                    PickItem::new("jrebel", "JRebel（需要自备 Agent 和授权）"),
+                ])?.ok_or(Error::Cancelled)?;
+                global_agent(&root, &c)?;
+                generate(&p, &c)?;
+                save(&root, &c)?;
+                host::refresh_view("modules");
+                Ok(Some("引擎已切换，请停止旧服务并选择新的 Run Application 启动。".into()))
+            }
             "check" => {
-                global_agent()?;
+                let c = load(&root)?.ok_or("请先初始化项目并设置 Agent 路径")?;
+                global_agent(&root, &c)?;
+                generate(&p, &c)?;
                 host::start_run("agent-check", &[], false)?;
                 Ok(None)
             }
@@ -344,17 +375,17 @@ impl Plugin for Integration {
 impl RunConfigurations for Integration {
     fn configurations(&mut self, root: &str) -> Vec<PluginRunConfiguration> {
         let result = (|| {
-            let agent = global_agent()?;
-            let mut list = vec![PluginRunConfiguration {
-                id: "agent-check".into(), name: "JRebel: Check Agent".into(), program: "java".into(),
-                args: vec![agent.clone(), "-version".into()], cwd: Some(root.into()), ..Default::default()
-            }];
+            let mut list = Vec::new();
             if let Some(c) = load(root)? {
+                let agent = global_agent(root, &c)?;
+                list.push(PluginRunConfiguration {
+                    id: "agent-check".into(), name: "Echo: Check Agent".into(), program: "java".into(),
+                    args: vec![agent.clone(), "-version".into()], cwd: Some(root.into()), ..Default::default()
+                });
                 list.extend(configs(root, &c, &agent)?);
             } else {
-                // Show useful starters for every project; configuration remains project-scoped.
                 list.push(PluginRunConfiguration {
-                    id: "compile".into(), name: "JRebel: Compile Updates (configure project first)".into(),
+                    id: "compile".into(), name: "Echo: Compile Updates (configure project first)".into(),
                     program: "mvn".into(), args: vec!["-DskipTests".into(), "compile".into()],
                     cwd: Some(root.into()), ..Default::default()
                 });
@@ -371,12 +402,12 @@ impl RunConfigurations for Integration {
 impl Views for Integration {
     fn render(&mut self, view: &str, _viewport: Option<openidea_plugin::views::Viewport>, ctx: &Invocation) -> Result<View, Error> {
         if view != "modules" { return Ok(View::message("未知的 Echo JRebel 视图")); }
-        let Some(project) = ctx.project() else { return Ok(View::message("打开项目以管理 JRebel 模块")); };
+        let Some(project) = ctx.project() else { return Ok(View::message("打开项目以管理热更新模块")); };
         let root = project.root()?;
         let config = load(&root)?;
         let status = html_escape(&match config.as_ref() {
-            Some(c) if !c.enabled => "当前项目的 JRebel 已禁用".to_owned(),
-            Some(_) => auto::view_status(&root)?,
+            Some(c) if !c.enabled => "当前项目的热更新已禁用".to_owned(),
+            Some(c) => format!("引擎：{} · {}", c.engine, auto::view_status(&root)?),
             None => "先初始化项目以启用热部署".to_owned(),
         });
         let modules = config.as_ref().map(|c| c.modules.iter().map(|m| {
@@ -391,9 +422,10 @@ impl Views for Integration {
         let empty = if config.is_none() { "<div class=\"empty\"><span class=\"empty-mark\">E</span><strong>还没有配置项目</strong><span>自动识别启动模块并生成热部署映射</span><button data-action=\"setup\" class=\"primary\">初始化项目</button></div>" } else if count == 0 { "<div class=\"empty compact\">没有已选热部署模块</div>" } else { "" };
         let initialized = config.is_some();
         let actions = if initialized {
-            format!(r#"<button type="button" data-action="run" class="primary run"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M6 3.8c0-.8.9-1.3 1.6-.9l9 5.2a2.2 2.2 0 0 1 0 3.8l-9 5.2c-.7.4-1.6-.1-1.6-.9z"/></svg><span>运行服务</span><span class="button-hint">JRebel</span></button><button type="button" data-action="compile" class="secondary"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M4 4.5h12M4 8h8M4 11.5h10M4 15h6"/><path d="m13 14 2 2 3-4"/></svg><span>编译更新</span></button><button type="button" data-action="setup" class="secondary"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 3.5v13M3.5 10h13"/></svg><span>配置模块</span></button><button type="button" data-action="auto-toggle" class="auto-toggle {}" aria-pressed="{}"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M11.5 2.5 4.5 11h4l-.5 6.5 7.5-9h-4z"/></svg><span>自动编译</span><span class="button-state">{}</span></button>"#,
+            format!(r#"<button type="button" data-action="run" class="primary run"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M6 3.8c0-.8.9-1.3 1.6-.9l9 5.2a2.2 2.2 0 0 1 0 3.8l-9 5.2c-.7.4-1.6-.1-1.6-.9z"/></svg><span>运行服务</span><span class="button-hint">热更新</span></button><button type="button" data-action="compile" class="secondary"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M4 4.5h12M4 8h8M4 11.5h10M4 15h6"/><path d="m13 14 2 2 3-4"/></svg><span>编译更新</span></button><button type="button" data-action="setup" class="secondary"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 3.5v13M3.5 10h13"/></svg><span>配置模块</span></button><button type="button" data-action="auto-toggle" class="auto-toggle {}" aria-pressed="{}"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M11.5 2.5 4.5 11h4l-.5 6.5 7.5-9h-4z"/></svg><span>自动编译</span><span class="button-state">{}</span></button>"#,
                 if auto_enabled { "active" } else { "" }, auto_enabled, if auto_enabled { "已开启" } else { "已暂停" })
         } else { String::new() };
+        let actions = if initialized { format!("{actions}<button data-action=\"engine-select\" class=\"secondary\">切换引擎</button><button data-action=\"reload-status\" class=\"secondary\">查看重载记录</button>") } else { actions };
         let reset = if initialized { "<button data-action=\"reset\" class=\"quiet danger\">重置配置</button>" } else { "" };
         let html = format!(r#"<!doctype html><html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}body{{margin:0;padding:16px;color:var(--openidea-fg);background:transparent;font:var(--openidea-font-size,13px)/1.45 var(--openidea-font-ui,system-ui,sans-serif)}}
@@ -419,8 +451,10 @@ document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click'
                             Some(path) => toggle_module(ctx, path),
                             None => Err("模块路径无效".into()),
                         }
-                    } else if matches!(id.as_str(), "run" | "compile" | "auto-toggle" | "setup" | "reset") {
-                        <Self as Plugin>::run_command(self, &id, ctx, None).map(|_| ())
+                    } else if matches!(id.as_str(), "run" | "compile" | "auto-toggle" | "setup" | "reset" | "engine-select" | "reload-status") {
+                        <Self as Plugin>::run_command(self, &id, ctx, None).map(|message| {
+                            if let Some(message) = message { host::notify(openidea_plugin::NotificationLevel::Info, "Echo", &message); }
+                        })
                     } else {
                         Ok(())
                     };
@@ -452,7 +486,7 @@ fn toggle_module(ctx: &Invocation, path: &str) -> Result<(), Error> {
     validate(&config)?;
     generate(&project, &config)?;
     save(&root, &config)?;
-    host::notify(openidea_plugin::NotificationLevel::Info, "Echo JRebel", "模块状态已更新，rebel.xml 映射已同步");
+    host::notify(openidea_plugin::NotificationLevel::Info, "Echo JRebel", "模块状态已更新，映射已同步。Echo Agent 需重启服务才能应用模块范围变化。");
     Ok(())
 }
 
@@ -467,7 +501,7 @@ mod tests {
         let contributes = &manifest["contributes"];
         let commands = contributes["commands"].as_array().unwrap();
         let menus = contributes["menus"].as_array().unwrap();
-        assert_eq!(menus.len(), 10);
+        assert_eq!(menus.len(), 13);
         for menu in menus {
             assert!(matches!(menu["menu"].as_str(), Some("tools" | "mainToolbar")));
             assert!(menu.get("submenu").is_none(), "OpenIDEA only supports submenu for context menus");
@@ -478,7 +512,7 @@ mod tests {
     }
 
     pub(crate) fn config() -> Config {
-        Config { enabled: true, launch: "maven-boot".into(), pom: "app/pom.xml".into(), java_args: vec!["-jar".into(), "app.jar".into()], jvm_args: vec![], app_args: vec![], build_tool: "mvn".into(), compile_args: vec!["compile".into()], modules: vec![Module { path: "app".into(), enabled: true, classes: vec!["target/classes".into()], resources: vec!["src/main/resources".into()], rebel_file: "src/main/resources/rebel.xml".into() }] }
+        Config { engine: "jrebel".into(), enabled: true, launch: "maven-boot".into(), pom: "app/pom.xml".into(), java_args: vec!["-jar".into(), "app.jar".into()], jvm_args: vec![], app_args: vec![], build_tool: "mvn".into(), compile_args: vec!["compile".into()], modules: vec![Module { path: "app".into(), enabled: true, classes: vec!["target/classes".into()], resources: vec!["src/main/resources".into()], rebel_file: "src/main/resources/rebel.xml".into() }] }
     }
 
     #[test]

@@ -1,5 +1,18 @@
 {
   "properties": {
+    "engine": {
+      "type": "string",
+      "title": "新项目默认引擎",
+      "enum": ["echo", "jrebel"],
+      "default": "echo",
+      "description": "Echo 为独立自研 Agent；旧项目保持原引擎，可通过切换热更新引擎命令迁移。"
+    },
+    "echoAgentJar": {
+      "type": "string",
+      "title": "Echo Agent JAR 绝对路径",
+      "default": "",
+      "description": "将安装包内 dist/echo-agent.jar 放到固定目录，例如 C:/Echo/echo-agent.jar；独立运行，无需 JRebel。"
+    },
     "agentLibrary": {
       "type": "string",
       "title": "JRebel native Agent library (absolute path)",

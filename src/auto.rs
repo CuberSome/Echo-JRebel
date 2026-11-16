@@ -141,7 +141,7 @@ fn snapshot(p: &Project, root: &str, c: &Config, s: &mut State, seed: bool) -> R
     Ok(())
 }
 
-fn compile_time_text(timestamp: Option<u64>) -> String {
+pub(super) fn compile_time_text(timestamp: Option<u64>) -> String {
     let Some(timestamp) = timestamp else { return "暂无".into(); };
     let seconds = timestamp / 1000 + 8 * 3600;
     let days = seconds / 86400;
@@ -170,25 +170,16 @@ fn civil_date(days: i64) -> (i64, i64, i64) {
 }
 
 fn status(s: &State, detail: &str) {
-    let state = if s.running.is_some() { "JRebel: 编译中" }
-        else if !s.enabled { "JRebel 自动: 关" }
-        else if s.dirty_at.is_some() { "JRebel 自动: 等待5秒" }
-        else { "JRebel 自动: 开" };
+    let state = if s.running.is_some() { "Echo: 编译中" }
+        else if !s.enabled { "Echo 自动: 关" }
+        else if s.dirty_at.is_some() { "Echo 自动: 等待5秒" }
+        else { "Echo 自动: 开" };
     let text = match s.last_compile_at {
         Some(at) => format!("Echo JRebel · {}", compile_time_short(at)),
         None => state.to_owned(),
     };
     let _ = host::set_window_status_item("auto", &StatusItem {
         text, tooltip: Some(format!("{detail}\n上次编译时间：{}\n点击开启/暂停。开启后空闲5秒执行 Save All，仅编译所选模块。", compile_time_text(s.last_compile_at))),
-        command: Some("auto-toggle".into()),
-    });
-    let top_text = if s.running.is_some() { "JRebel: 编译中" }
-        else if s.enabled && s.dirty_at.is_some() { "JRebel 自动: 等待" }
-        else if s.enabled { "JRebel 自动: 开" }
-        else { "JRebel 自动: 关" };
-    let _ = host::set_window_status_item("auto-top", &StatusItem {
-        text: top_text.into(),
-        tooltip: Some(format!("{detail}\n上次成功编译：{}\n点击切换自动编译。", compile_time_text(s.last_compile_at))),
         command: Some("auto-toggle".into()),
     });
 }
@@ -419,6 +410,7 @@ mod tests {
     #[test]
     fn enabled_state_seeds_existing_buffers_without_saving_or_building() {
         let mock = MockHost::install();
+        persist("/project", &State { enabled: false, manual_override: Some(false), ..Default::default() }).unwrap();
         mock.open_editor("/project/app/src/main/java/Test.java", "java", "unsaved existing work", &[]);
         let p = mock.invocation().project().unwrap();
         toggle(&p, &crate::tests::config()).unwrap();

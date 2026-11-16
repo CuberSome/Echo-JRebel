@@ -1,10 +1,10 @@
 id = "local.jrebel-integration"
 name = "Echo JRebel"
-version = "0.4.5"
-description = "Echo JRebel adds a live auto-compile status to OpenIDEA's main toolbar. Uses your locally licensed Agent."
+version = "0.5.0"
+description = "Independent Echo Agent method-body hot reload, automatic compilation and reload records. Optional legacy JRebel integration."
 authors = ["CuberSome"]
 categories = ["tools", "frameworks"]
-engines.openidea = "^1.9"
+engines.openidea = "^1.7"
 wasm = "dist/plugin.wasm"
 activation = ["on-command:*", "on-view:modules", "on-event:document-changed", "on-event:file-saved", "on-event:files-changed", "on-event:file-opened"]
 
@@ -32,18 +32,28 @@ icon = "sync"
 
 [[contributes.statusBar]]
 id = "auto"
-text = "JRebel 自动: 关"
+text = "Echo 自动: 关"
 tooltip = "点击开启/暂停。停止修改5秒后保存全部，仅编译所选模块。"
 command = "auto-toggle"
 align = "right"
 
-[[contributes.statusBar]]
-id = "auto-top"
-text = "Echo JRebel"
-tooltip = "显示自动编译状态；点击切换。"
-command = "auto-toggle"
-align = "right"
-placement = "mainToolbar"
+[[contributes.commands]]
+id = "reload-status"
+title = "查看重载记录"
+category = "Echo"
+
+[[contributes.commands]]
+id = "engine-select"
+title = "切换热更新引擎"
+category = "Echo"
+
+[[contributes.menus]]
+menu = "tools"
+command = "reload-status"
+
+[[contributes.menus]]
+menu = "tools"
+command = "engine-select"
 
 [[contributes.commands]]
 id = "setup"
@@ -57,7 +67,7 @@ category = "JRebel"
 
 [[contributes.commands]]
 id = "run"
-title = "运行服务（JRebel）"
+title = "运行服务（Echo / JRebel）"
 category = "JRebel"
 icon = "play"
 
